@@ -8,6 +8,7 @@ namespace http_server {
 
 /// HTTP request methods.
 enum class HttpMethod {
+    unknown,
     GET,
     POST,
     PUT,
@@ -20,6 +21,7 @@ enum class HttpMethod {
 /// Convert an HttpMethod to its standard string representation.
 inline std::string to_string(HttpMethod method) {
     switch (method) {
+        case HttpMethod::unknown: return "UNKNOWN";
         case HttpMethod::GET:     return "GET";
         case HttpMethod::POST:    return "POST";
         case HttpMethod::PUT:     return "PUT";

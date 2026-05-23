@@ -28,7 +28,10 @@ public:
     void stop() override;
     bool is_running() const noexcept override;
 
-    std::exception_ptr last_exception() const noexcept { return server_exception_; }
+    std::exception_ptr last_exception() const noexcept {
+        std::lock_guard<std::mutex> lock(exception_mutex_);
+        return server_exception_;
+    }
 
 private:
     struct SwsServerHolder;
@@ -46,6 +49,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> started_{false};
     std::thread server_thread_;
+    mutable std::mutex exception_mutex_;
     std::exception_ptr server_exception_;
 };
 

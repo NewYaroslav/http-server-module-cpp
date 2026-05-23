@@ -85,7 +85,10 @@ void SimpleWebServerBackend::start() {
         try {
             holder_->server->start();
         } catch (...) {
-            server_exception_ = std::current_exception();
+            {
+                std::lock_guard<std::mutex> lock(exception_mutex_);
+                server_exception_ = std::current_exception();
+            }
         }
         running_.store(false);
     });
@@ -211,7 +214,7 @@ HttpRequestContext SimpleWebServerBackend::make_request_context(
     if (method_opt) {
         ctx.method = *method_opt;
     } else {
-        ctx.method = HttpMethod::GET;
+        ctx.method = HttpMethod::unknown;
     }
 
     ctx.path = request.path;
