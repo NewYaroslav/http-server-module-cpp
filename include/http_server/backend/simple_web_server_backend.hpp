@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -26,6 +27,8 @@ public:
     void start() override;
     void stop() override;
     bool is_running() const noexcept override;
+
+    std::exception_ptr last_exception() const noexcept { return server_exception_; }
 
 private:
     struct SwsServerHolder;
@@ -66,7 +69,7 @@ public:
     void set_on_close(CloseCallback callback) override;
 
 private:
-    void send_next_locked();
+    CloseCallback send_next_locked();
     void finish_close_unlocked();
 
     std::shared_ptr<void> response_;

@@ -13,6 +13,7 @@ namespace http_server {
 struct HttpRequestContext {
     std::string request_id;
     HttpMethod method = HttpMethod::GET;
+    std::string method_raw;
     std::string path;
     std::string target;
     std::string query_string;

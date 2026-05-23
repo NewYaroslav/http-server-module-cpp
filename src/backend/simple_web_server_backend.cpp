@@ -6,6 +6,7 @@
 #include <server_http.hpp>
 
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -34,9 +35,7 @@ SimpleWebServerBackend::SimpleWebServerBackend()
     : holder_(std::make_unique<SwsServerHolder>()) {}
 
 SimpleWebServerBackend::~SimpleWebServerBackend() {
-    if (running_.load()) {
-        stop();
-    }
+    stop();
 }
 
 void SimpleWebServerBackend::set_config(HttpServerConfig config) {
@@ -59,6 +58,9 @@ void SimpleWebServerBackend::start() {
     if (!started_.compare_exchange_strong(expected, true)) {
         return;  // Already started.
     }
+
+    // Create a fresh server instance so restart works after stop().
+    holder_ = std::make_unique<SwsServerHolder>();
 
     auto& server = holder_->server;
 
@@ -90,11 +92,15 @@ void SimpleWebServerBackend::start() {
 }
 
 void SimpleWebServerBackend::stop() {
+    if (!holder_ || !holder_->server) {
+        return;
+    }
     holder_->server->stop();
     running_.store(false);
     if (server_thread_.joinable()) {
         server_thread_.join();
     }
+    started_.store(false);
 }
 
 bool SimpleWebServerBackend::is_running() const noexcept {
@@ -117,14 +123,6 @@ void SimpleWebServerBackend::register_routes() {
                             const std::shared_ptr<SwsServer::Request>& request) {
                 auto ctx = make_request_context(
                     std::static_pointer_cast<void>(request));
-
-                // Guard against unknown HTTP method parsed from request.
-                if (ctx.method == HttpMethod::GET &&
-                    request->method != "GET") {
-                    // This means http_method_from_string returned default GET
-                    // because it didn't recognise the method.  In the optional
-                    // return path this branch is replaced by std::nullopt handling.
-                }
 
                 HttpResponseWriter writer(
                     [response](HttpResponseData data) {
@@ -208,13 +206,11 @@ HttpRequestContext SimpleWebServerBackend::make_request_context(
     HttpRequestContext ctx;
     ctx.request_id = utils::generate_request_id();
 
+    ctx.method_raw = request.method;
     auto method_opt = http_method_from_string(request.method);
     if (method_opt) {
         ctx.method = *method_opt;
     } else {
-        // Unknown method: store as GET for context but backend will return 405
-        // before reaching the user handler.  This path should rarely be hit
-        // because Simple-Web-Server already dispatches by method string key.
         ctx.method = HttpMethod::GET;
     }
 
@@ -279,15 +275,21 @@ bool SimpleWebStreamSession::is_closed() const {
 }
 
 void SimpleWebStreamSession::send_chunk(std::string chunk) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (close_requested_ || closed_) {
-        return;
-    }
+    CloseCallback cb;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (close_requested_ || closed_) {
+            return;
+        }
 
-    queue_.push(std::move(chunk));
-    if (!sending_) {
-        sending_ = true;
-        send_next_locked();
+        queue_.push(std::move(chunk));
+        if (!sending_) {
+            sending_ = true;
+            cb = send_next_locked();
+        }
+    }
+    if (cb) {
+        cb(stream_id_);
     }
 }
 
@@ -336,7 +338,7 @@ void SimpleWebStreamSession::set_on_close(CloseCallback callback) {
     on_close_ = std::move(callback);
 }
 
-void SimpleWebStreamSession::send_next_locked() {
+SimpleWebStreamSession::CloseCallback SimpleWebStreamSession::send_next_locked() {
     using SwsServer = SimpleWeb::Server<SimpleWeb::HTTP>;
 
     if (queue_.empty()) {
@@ -345,13 +347,9 @@ void SimpleWebStreamSession::send_next_locked() {
             finish_close_unlocked();
             CloseCallback cb = std::move(on_close_);
             on_close_ = nullptr;
-            mutex_.unlock();
-            if (cb) {
-                cb(stream_id_);
-            }
-            mutex_.lock();
+            return cb;
         }
-        return;
+        return {};
     }
 
     std::string chunk = std::move(queue_.front());
@@ -391,10 +389,18 @@ void SimpleWebStreamSession::send_next_locked() {
             cb(self->stream_id_);
         }
         if (recurse) {
-            std::lock_guard<std::mutex> lock(self->mutex_);
-            self->send_next_locked();
+            CloseCallback recurse_cb;
+            {
+                std::lock_guard<std::mutex> lock(self->mutex_);
+                recurse_cb = self->send_next_locked();
+            }
+            if (recurse_cb) {
+                recurse_cb(self->stream_id_);
+            }
         }
     });
+
+    return {};
 }
 
 void SimpleWebStreamSession::finish_close_unlocked() {
