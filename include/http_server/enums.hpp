@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -30,8 +31,8 @@ inline std::string to_string(HttpMethod method) {
     return "UNKNOWN";
 }
 
-/// Parse a string into an HttpMethod. Returns HttpMethod::GET on failure.
-inline HttpMethod http_method_from_string(std::string_view str) {
+/// Parse a string into an HttpMethod. Returns std::nullopt on failure.
+inline std::optional<HttpMethod> http_method_from_string(std::string_view str) {
     if (str == "GET")     return HttpMethod::GET;
     if (str == "POST")    return HttpMethod::POST;
     if (str == "PUT")     return HttpMethod::PUT;
@@ -39,7 +40,7 @@ inline HttpMethod http_method_from_string(std::string_view str) {
     if (str == "DELETE")  return HttpMethod::DELETE_;
     if (str == "OPTIONS") return HttpMethod::OPTIONS;
     if (str == "HEAD")    return HttpMethod::HEAD;
-    return HttpMethod::GET;
+    return std::nullopt;
 }
 
 /// HTTP response status codes with semantic names.

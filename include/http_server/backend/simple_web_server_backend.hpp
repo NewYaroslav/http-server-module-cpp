@@ -41,7 +41,9 @@ private:
     std::vector<HttpRoute> direct_routes_;
     std::vector<HttpStreamRoute> stream_routes_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> started_{false};
     std::thread server_thread_;
+    std::exception_ptr server_exception_;
 };
 
 /// Concrete streaming session backed by a SimpleWeb Response.
@@ -58,21 +60,22 @@ public:
     void send_chunk(std::string chunk) override;
     void send_sse(std::string event_name, std::string data) override;
     void send_sse_data(std::string data) override;
-    void send_done() override;
+    void send_sse_done() override;
     void close() override;
 
     void set_on_close(CloseCallback callback) override;
 
 private:
     void send_next_locked();
-    void invoke_close_callback();
+    void finish_close_unlocked();
 
     std::shared_ptr<void> response_;
     std::string stream_id_;
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::queue<std::string> queue_;
     bool sending_ = false;
+    bool close_requested_ = false;
     bool closed_ = false;
     CloseCallback on_close_;
 };

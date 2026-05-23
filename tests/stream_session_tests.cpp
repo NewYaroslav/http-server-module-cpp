@@ -32,7 +32,7 @@ public:
         send_chunk("data: " + data + "\n\n");
     }
 
-    void send_done() override {
+    void send_sse_done() override {
         send_chunk("data: [DONE]\n\n");
     }
 
@@ -89,13 +89,13 @@ void test_sse_format() {
     std::cout << "test_sse_format: OK\n";
 }
 
-void test_send_done_format() {
+void test_send_sse_done_format() {
     auto session = std::make_shared<MockStreamSession>();
-    session->send_done();
+    session->send_sse_done();
     assert(session->sent_chunks.size() == 1);
     assert(session->sent_chunks[0] == "data: [DONE]\n\n");
 
-    std::cout << "test_send_done_format: OK\n";
+    std::cout << "test_send_sse_done_format: OK\n";
 }
 
 int main() {
@@ -103,7 +103,7 @@ int main() {
     test_send_after_close_ignored();
     test_close_idempotent();
     test_sse_format();
-    test_send_done_format();
+    test_send_sse_done_format();
     std::cout << "All stream_session_tests passed.\n";
     return 0;
 }

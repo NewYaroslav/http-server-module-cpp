@@ -101,7 +101,7 @@ int main() {
                         std::string("{\"value\":") + std::to_string(i) + "}");
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                 }
-                stream->send_done();
+                stream->send_sse_done();
                 stream->close();
             }).detach();
         }
@@ -126,6 +126,10 @@ through the event bus:
 6. On timeout the adapter returns `504 Gateway Timeout`.
 
 This keeps the HTTP layer decoupled from business logic.
+
+**Note:** `EventRouteAdapter` and the event-hub headers are currently an
+**experimental scaffold**. The full `add_event_route()` implementation with
+`event_hub::EventBus::await_once` integration is planned for a follow-up PR.
 
 ## Backend notes
 

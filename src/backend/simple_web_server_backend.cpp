@@ -55,6 +55,11 @@ void SimpleWebServerBackend::add_stream_route(HttpStreamRouteConfig config,
 }
 
 void SimpleWebServerBackend::start() {
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true)) {
+        return;  // Already started.
+    }
+
     auto& server = holder_->server;
 
     server->config.port = config_.port;
@@ -78,6 +83,7 @@ void SimpleWebServerBackend::start() {
         try {
             holder_->server->start();
         } catch (...) {
+            server_exception_ = std::current_exception();
         }
         running_.store(false);
     });
@@ -112,6 +118,14 @@ void SimpleWebServerBackend::register_routes() {
                 auto ctx = make_request_context(
                     std::static_pointer_cast<void>(request));
 
+                // Guard against unknown HTTP method parsed from request.
+                if (ctx.method == HttpMethod::GET &&
+                    request->method != "GET") {
+                    // This means http_method_from_string returned default GET
+                    // because it didn't recognise the method.  In the optional
+                    // return path this branch is replaced by std::nullopt handling.
+                }
+
                 HttpResponseWriter writer(
                     [response](HttpResponseData data) {
                         SimpleWeb::CaseInsensitiveMultimap headers;
@@ -125,6 +139,14 @@ void SimpleWebServerBackend::register_routes() {
                     });
 
                 handler(ctx, writer);
+
+                // Fallback if the handler never sent a response.
+                if (!writer.is_sent()) {
+                    writer.send_json(
+                        HttpStatus::internal_server_error,
+                        R"({"error":"handler did not send a response"})"
+                    );
+                }
             };
     }
 
@@ -185,7 +207,17 @@ HttpRequestContext SimpleWebServerBackend::make_request_context(
 
     HttpRequestContext ctx;
     ctx.request_id = utils::generate_request_id();
-    ctx.method = http_method_from_string(request.method);
+
+    auto method_opt = http_method_from_string(request.method);
+    if (method_opt) {
+        ctx.method = *method_opt;
+    } else {
+        // Unknown method: store as GET for context but backend will return 405
+        // before reaching the user handler.  This path should rarely be hit
+        // because Simple-Web-Server already dispatches by method string key.
+        ctx.method = HttpMethod::GET;
+    }
+
     ctx.path = request.path;
     ctx.target = request.path;
     if (!request.query_string.empty()) {
@@ -223,8 +255,17 @@ SimpleWebStreamSession::SimpleWebStreamSession(
     : response_(std::move(response)), stream_id_(std::move(stream_id)) {}
 
 SimpleWebStreamSession::~SimpleWebStreamSession() {
-    if (!closed_) {
-        close();
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!close_requested_ && !closed_) {
+        close_requested_ = true;
+        // Best-effort: attempt to finish close synchronously if nothing is
+        // in-flight.  We must NOT invoke on_close_ from the destructor.
+        if (!sending_ && queue_.empty()) {
+            closed_ = true;
+            response_.reset();
+            // Intentionally drop on_close_ without invoking it.
+            on_close_ = nullptr;
+        }
     }
 }
 
@@ -233,12 +274,15 @@ std::string SimpleWebStreamSession::id() const {
 }
 
 bool SimpleWebStreamSession::is_closed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return closed_;
 }
 
 void SimpleWebStreamSession::send_chunk(std::string chunk) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_) return;
+    if (close_requested_ || closed_) {
+        return;
+    }
 
     queue_.push(std::move(chunk));
     if (!sending_) {
@@ -259,7 +303,7 @@ void SimpleWebStreamSession::send_sse_data(std::string data) {
     send_chunk(std::move(frame));
 }
 
-void SimpleWebStreamSession::send_done() {
+void SimpleWebStreamSession::send_sse_done() {
     std::string frame = "data: [DONE]\n\n";
     send_chunk(std::move(frame));
 }
@@ -268,15 +312,18 @@ void SimpleWebStreamSession::close() {
     CloseCallback cb;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (closed_) return;
-        closed_ = true;
-
-        if (!sending_) {
-            response_.reset();
+        if (close_requested_ || closed_) {
+            return;
         }
+        close_requested_ = true;
 
-        cb = std::move(on_close_);
-        on_close_ = nullptr;
+        if (!sending_ && queue_.empty()) {
+            finish_close_unlocked();
+            cb = std::move(on_close_);
+            on_close_ = nullptr;
+        }
+        // If still sending / queue not empty, send_next_locked() will call
+        // finish_close_unlocked() when the queue drains.
     }
 
     if (cb) {
@@ -294,8 +341,8 @@ void SimpleWebStreamSession::send_next_locked() {
 
     if (queue_.empty()) {
         sending_ = false;
-        if (closed_) {
-            response_.reset();
+        if (close_requested_ && !closed_) {
+            finish_close_unlocked();
             CloseCallback cb = std::move(on_close_);
             on_close_ = nullptr;
             mutex_.unlock();
@@ -317,23 +364,42 @@ void SimpleWebStreamSession::send_next_locked() {
         this->shared_from_this());
     response.send([self](const SimpleWeb::error_code& ec) {
         CloseCallback cb;
+        bool recurse = false;
         {
             std::lock_guard<std::mutex> lock(self->mutex_);
             if (ec) {
-                self->closed_ = true;
                 self->sending_ = false;
-                self->response_.reset();
-                cb = std::move(self->on_close_);
-                self->on_close_ = nullptr;
+                if (!self->closed_) {
+                    self->finish_close_unlocked();
+                    cb = std::move(self->on_close_);
+                    self->on_close_ = nullptr;
+                }
             } else {
-                self->send_next_locked();
-                return;
+                if (self->close_requested_ && self->queue_.empty()) {
+                    self->sending_ = false;
+                    if (!self->closed_) {
+                        self->finish_close_unlocked();
+                        cb = std::move(self->on_close_);
+                        self->on_close_ = nullptr;
+                    }
+                } else {
+                    recurse = true;
+                }
             }
         }
         if (cb) {
             cb(self->stream_id_);
         }
+        if (recurse) {
+            std::lock_guard<std::mutex> lock(self->mutex_);
+            self->send_next_locked();
+        }
     });
+}
+
+void SimpleWebStreamSession::finish_close_unlocked() {
+    closed_ = true;
+    response_.reset();
 }
 
 } // namespace http_server

@@ -26,7 +26,7 @@ int main() {
                     );
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                 }
-                stream->send_done();
+                stream->send_sse_done();
                 stream->close();
             }).detach();
         }

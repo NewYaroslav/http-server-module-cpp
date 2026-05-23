@@ -20,7 +20,7 @@ public:
     virtual void send_chunk(std::string chunk) = 0;
     virtual void send_sse(std::string event_name, std::string data) = 0;
     virtual void send_sse_data(std::string data) = 0;
-    virtual void send_done() = 0;
+    virtual void send_sse_done() = 0;
     virtual void close() = 0;
 
     virtual void set_on_close(CloseCallback callback) = 0;
