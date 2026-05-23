@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+
+add_executable(direct_routes_example direct_routes_example.cpp)
+target_link_libraries(direct_routes_example PRIVATE http_server_module)
+
+add_executable(stream_sse_example stream_sse_example.cpp)
+target_link_libraries(stream_sse_example PRIVATE http_server_module)
