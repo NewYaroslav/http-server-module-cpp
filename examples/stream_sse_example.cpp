@@ -12,7 +12,7 @@ int main() {
     http_server::HttpServerModule server(config);
 
     server.add_stream_route(
-        {http_server::HttpMethod::GET, R"(^/events$)", "events", true, true},
+        {http_server::HttpMethod::GET, R"(^/events$)", "events", true, http_server::StreamMode::sse},
         [](const http_server::HttpRequestContext& ctx,
            std::shared_ptr<http_server::HttpStreamSession> stream) {
             (void)ctx;

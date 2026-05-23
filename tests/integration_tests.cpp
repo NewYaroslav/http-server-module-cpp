@@ -214,6 +214,35 @@ void test_direct_post_echo() {
     std::cout << "test_direct_post_echo: OK\n";
 }
 
+void test_direct_path_params() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    server.add_direct_route(
+        {HttpMethod::GET, R"(^/users/([0-9]+)$)", "user"},
+        [](const HttpRequestContext& ctx, HttpResponseWriter& res) {
+            auto it = ctx.path_params.find("1");
+            if (it != ctx.path_params.end()) {
+                res.send_json(HttpStatus::ok, R"({"id":""" + it->second + R"("})");
+            } else {
+                res.send_json(HttpStatus::bad_request, R"({"error":"missing id"})");
+            }
+        });
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("GET", "/users/42", port);
+    assert(std::stoi(resp->status_code) == 200);
+    assert(resp->content.string() == R"({"id":"42"})");
+
+    server.stop();
+    std::cout << "test_direct_path_params: OK\n";
+}
+
 void test_stream_sse_headers() {
     uint16_t port = find_free_port();
     HttpServerConfig config;
@@ -222,7 +251,7 @@ void test_stream_sse_headers() {
     HttpServerModule server(config);
 
     server.add_stream_route(
-        {HttpMethod::GET, R"(^/events$)", "events", true, true},
+        {HttpMethod::GET, R"(^/events$)", "events", true, StreamMode::sse},
         [](const HttpRequestContext& ctx, std::shared_ptr<HttpStreamSession> stream) {
             (void)ctx;
             stream->send_sse("connected", R"({"ok":true})");
@@ -260,7 +289,7 @@ void test_stream_sse_content() {
     HttpServerModule server(config);
 
     server.add_stream_route(
-        {HttpMethod::GET, R"(^/events$)", "events", true, true},
+        {HttpMethod::GET, R"(^/events$)", "events", true, StreamMode::sse},
         [](const HttpRequestContext& ctx, std::shared_ptr<HttpStreamSession> stream) {
             (void)ctx;
             stream->send_sse("connected", R"({"ok":true})");
@@ -282,6 +311,39 @@ void test_stream_sse_content() {
 
     server.stop();
     std::cout << "test_stream_sse_content: OK\n";
+}
+
+void test_stream_chunked_raw() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    server.add_stream_route(
+        {HttpMethod::GET, R"(^/chunked$)", "chunked", true, StreamMode::chunked},
+        [](const HttpRequestContext& ctx, std::shared_ptr<HttpStreamSession> stream) {
+            (void)ctx;
+            stream->send_chunk("hello");
+            stream->send_chunk("world");
+            stream->close();
+        });
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("GET", "/chunked", port);
+    assert(std::stoi(resp->status_code) == 200);
+
+    auto it = resp->header.find("Transfer-Encoding");
+    assert(it != resp->header.end());
+    assert(it->second.find("chunked") != std::string::npos);
+
+    std::string body = resp->content.string();
+    assert(body.find("helloworld") != std::string::npos);
+
+    server.stop();
+    std::cout << "test_stream_chunked_raw: OK\n";
 }
 
 void test_server_restart() {
@@ -323,6 +385,7 @@ int main() {
     test_direct_post_echo();
     test_stream_sse_headers();
     test_stream_sse_content();
+    test_stream_chunked_raw();
     test_server_restart();
     std::cout << "All integration tests passed.\n";
     return 0;

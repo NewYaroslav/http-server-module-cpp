@@ -8,8 +8,11 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <iomanip>
 #include <memory>
 #include <mutex>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -44,13 +47,18 @@ void SimpleWebServerBackend::set_config(HttpServerConfig config) {
 
 void SimpleWebServerBackend::add_direct_route(HttpRouteConfig config,
                                                DirectHandler handler) {
-    direct_routes_.push_back(HttpRoute{std::move(config), std::move(handler)});
+    auto compiled_regex = std::regex(config.path_regex);
+    CompiledHttpRoute route{
+        std::move(config), std::move(handler), std::move(compiled_regex)};
+    compiled_direct_routes_.push_back(std::move(route));
 }
 
 void SimpleWebServerBackend::add_stream_route(HttpStreamRouteConfig config,
                                                StreamHandler handler) {
-    stream_routes_.push_back(
-        HttpStreamRoute{std::move(config), std::move(handler)});
+    auto compiled_regex = std::regex(config.path_regex);
+    CompiledHttpStreamRoute route{
+        std::move(config), std::move(handler), std::move(compiled_regex)};
+    compiled_stream_routes_.push_back(std::move(route));
 }
 
 void SimpleWebServerBackend::start() {
@@ -115,17 +123,38 @@ void SimpleWebServerBackend::register_routes() {
     auto& server = holder_->server;
 
     // Direct routes
-    for (const auto& route : direct_routes_) {
+    for (const auto& route : compiled_direct_routes_) {
         if (!route.config.enabled) continue;
 
         std::string method_str = to_string(route.config.method);
         auto handler = route.handler;
+        auto path_regex = route.compiled_regex;
 
         server->resource[route.config.path_regex][method_str] =
-            [this, handler](const std::shared_ptr<SwsServer::Response>& response,
-                            const std::shared_ptr<SwsServer::Request>& request) {
+            [this, handler, path_regex](
+                const std::shared_ptr<SwsServer::Response>& response,
+                const std::shared_ptr<SwsServer::Request>& request) {
+                auto method_opt = http_method_from_string(request->method);
+                if (!method_opt) {
+                    SimpleWeb::CaseInsensitiveMultimap headers;
+                    headers.emplace("Content-Type", "application/json");
+                    response->write(
+                        SimpleWeb::StatusCode::client_error_method_not_allowed,
+                        R"({"error":"method not allowed"})",
+                        headers);
+                    return;
+                }
+
                 auto ctx = make_request_context(
                     std::static_pointer_cast<void>(request));
+                ctx.method = *method_opt;
+
+                std::smatch match;
+                if (std::regex_match(request->path, match, path_regex)) {
+                    for (size_t i = 0; i < match.size(); ++i) {
+                        ctx.path_params[std::to_string(i)] = match[i].str();
+                    }
+                }
 
                 HttpResponseWriter writer(
                     [response](HttpResponseData data) {
@@ -152,33 +181,57 @@ void SimpleWebServerBackend::register_routes() {
     }
 
     // Stream routes
-    for (const auto& route : stream_routes_) {
+    for (const auto& route : compiled_stream_routes_) {
         if (!route.config.enabled) continue;
 
         std::string method_str = to_string(route.config.method);
         auto handler = route.handler;
-        bool is_sse = route.config.sse;
+        auto path_regex = route.compiled_regex;
+        StreamMode mode = route.config.mode;
 
         server->resource[route.config.path_regex][method_str] =
-            [this, handler, is_sse](
+            [this, handler, path_regex, mode](
                 const std::shared_ptr<SwsServer::Response>& response,
                 const std::shared_ptr<SwsServer::Request>& request) {
+                auto method_opt = http_method_from_string(request->method);
+                if (!method_opt) {
+                    SimpleWeb::CaseInsensitiveMultimap headers;
+                    headers.emplace("Content-Type", "application/json");
+                    response->write(
+                        SimpleWeb::StatusCode::client_error_method_not_allowed,
+                        R"({"error":"method not allowed"})",
+                        headers);
+                    return;
+                }
+
                 auto ctx = make_request_context(
                     std::static_pointer_cast<void>(request));
+                ctx.method = *method_opt;
 
-                if (is_sse) {
-                    SimpleWeb::CaseInsensitiveMultimap headers;
+                std::smatch match;
+                if (std::regex_match(request->path, match, path_regex)) {
+                    for (size_t i = 0; i < match.size(); ++i) {
+                        ctx.path_params[std::to_string(i)] = match[i].str();
+                    }
+                }
+
+                SimpleWeb::CaseInsensitiveMultimap headers;
+                if (mode == StreamMode::sse) {
                     headers.emplace("Content-Type", "text/event-stream");
                     headers.emplace("Cache-Control", "no-cache");
                     headers.emplace("Connection", "keep-alive");
-                    response->write(SimpleWeb::StatusCode::success_ok,
-                                    std::string(), headers);
-                    response->send();
+                } else {
+                    headers.emplace("Content-Type", "application/octet-stream");
+                    headers.emplace("Transfer-Encoding", "chunked");
                 }
+                response->write(SimpleWeb::StatusCode::success_ok,
+                                std::string(), headers);
+                response->send();
 
                 auto session = std::make_shared<SimpleWebStreamSession>(
                     std::static_pointer_cast<void>(response),
-                    ctx.request_id);
+                    ctx.request_id,
+                    mode);
 
                 handler(ctx, session);
             };
@@ -250,8 +303,8 @@ int SimpleWebServerBackend::to_sws_status_code(HttpStatus status) {
 // ---------------------------------------------------------------------------
 
 SimpleWebStreamSession::SimpleWebStreamSession(
-    std::shared_ptr<void> response, std::string stream_id)
-    : response_(std::move(response)), stream_id_(std::move(stream_id)) {}
+    std::shared_ptr<void> response, std::string stream_id, StreamMode mode)
+    : response_(std::move(response)), stream_id_(std::move(stream_id)), mode_(mode) {}
 
 SimpleWebStreamSession::~SimpleWebStreamSession() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -278,6 +331,15 @@ bool SimpleWebStreamSession::is_closed() const {
 }
 
 void SimpleWebStreamSession::send_chunk(std::string chunk) {
+    if (mode_ == StreamMode::chunked) {
+        // HTTP/1.1 chunked transfer encoding framing
+        // TODO: add a raw socket wire-format test to verify exact
+        //       5\r\nhello\r\n bytes on the wire, not just client-decoded body.
+        std::ostringstream oss;
+        oss << std::hex << chunk.size() << "\r\n" << chunk << "\r\n";
+        chunk = oss.str();
+    }
+
     CloseCallback cb;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -322,7 +384,14 @@ void SimpleWebStreamSession::close() {
         }
         close_requested_ = true;
 
-        if (!sending_ && queue_.empty()) {
+        if (mode_ == StreamMode::chunked) {
+            // Terminating chunk for HTTP/1.1 chunked encoding
+            queue_.push("0\r\n\r\n");
+            if (!sending_) {
+                sending_ = true;
+                cb = send_next_locked();
+            }
+        } else if (!sending_ && queue_.empty()) {
             finish_close_unlocked();
             cb = std::move(on_close_);
             on_close_ = nullptr;

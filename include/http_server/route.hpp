@@ -28,13 +28,19 @@ struct HttpRouteConfig {
     bool enabled = true;
 };
 
+/// Streaming mode for a stream route.
+enum class StreamMode {
+    sse,
+    chunked
+};
+
 /// Configuration for a streaming route.
 struct HttpStreamRouteConfig {
     HttpMethod method = HttpMethod::GET;
     std::string path_regex;
     std::string name;
     bool enabled = true;
-    bool sse = true;
+    StreamMode mode = StreamMode::sse;
 };
 
 /// A direct route entry binding config to handler.

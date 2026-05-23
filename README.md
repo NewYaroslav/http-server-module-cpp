@@ -89,7 +89,7 @@ int main() {
     http_server::HttpServerModule server;
 
     server.add_stream_route(
-        {http_server::HttpMethod::GET, R"(^/events$)", "events", true, true},
+        {http_server::HttpMethod::GET, R"(^/events$)", "events", true, http_server::StreamMode::sse},
         [](const http_server::HttpRequestContext& ctx,
            std::shared_ptr<http_server::HttpStreamSession> stream) {
             (void)ctx;
@@ -145,6 +145,10 @@ future a Boost.Beast, Crow, or Drogon backend can be added by implementing
 - No built-in auth framework or rate limiter.
 - No OpenAPI generator.
 - Incoming request bodies are collected by the backend before the handler is invoked.
+- `max_response_size` and `response_timeout` are currently backend-level
+  Simple-Web-Server properties; they are not exposed as generic
+  `HttpServerConfig` fields because they are not portable across future
+  backends (e.g. Boost.Beast or Crow).
 
 ## License
 

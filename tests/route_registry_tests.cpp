@@ -37,7 +37,7 @@ void test_method_mismatch() {
 void test_stream_route() {
     RouteRegistry reg;
     reg.add_stream_route(HttpStreamRoute{
-        {HttpMethod::GET, R"(^/events$)", "events", true, true},
+        {HttpMethod::GET, R"(^/events$)", "events", true, StreamMode::sse},
         [](const HttpRequestContext&, std::shared_ptr<HttpStreamSession>) {}
     });
 

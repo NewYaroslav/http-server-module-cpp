@@ -13,6 +13,6 @@ add_executable(stream_session_tests stream_session_tests.cpp)
 target_link_libraries(stream_session_tests PRIVATE http_server_module)
 
 add_executable(integration_tests integration_tests.cpp)
-target_link_libraries(integration_tests PRIVATE http_server_module)
+target_link_libraries(integration_tests PRIVATE http_server_module ${asio_target} ${sws_target})
 
 # Simple test runner: just build them. Running is manual for now.
