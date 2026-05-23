@@ -118,6 +118,32 @@ AsyncResponse do_sse_request(uint16_t port, const std::string& path) {
     return result;
 }
 
+std::string do_raw_request(uint16_t port, const std::string& raw_request) {
+    asio::io_context io;
+    asio::ip::tcp::socket socket(io);
+    asio::ip::tcp::resolver resolver(io);
+    auto endpoints = resolver.resolve("127.0.0.1", std::to_string(port));
+    asio::connect(socket, endpoints);
+
+    asio::write(socket, asio::buffer(raw_request));
+
+    std::string response;
+    char buf[1024];
+    std::error_code ec;
+    while (true) {
+        std::size_t len = socket.read_some(asio::buffer(buf), ec);
+        if (ec == asio::error::eof) {
+            break;
+        }
+        if (ec) {
+            break;
+        }
+        response.append(buf, len);
+    }
+    socket.close();
+    return response;
+}
+
 void test_direct_health() {
     uint16_t port = find_free_port();
     HttpServerConfig config;
@@ -313,7 +339,7 @@ void test_stream_sse_content() {
     std::cout << "test_stream_sse_content: OK\n";
 }
 
-void test_stream_chunked_raw() {
+void test_stream_chunked_wire_format() {
     uint16_t port = find_free_port();
     HttpServerConfig config;
     config.address = "127.0.0.1";
@@ -332,18 +358,51 @@ void test_stream_chunked_raw() {
     server.start();
     wait_for_server(server);
 
-    auto resp = do_request("GET", "/chunked", port);
-    assert(std::stoi(resp->status_code) == 200);
+    std::string response = do_raw_request(
+        port,
+        "GET /chunked HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n");
 
-    auto it = resp->header.find("Transfer-Encoding");
-    assert(it != resp->header.end());
-    assert(it->second.find("chunked") != std::string::npos);
-
-    std::string body = resp->content.string();
-    assert(body.find("helloworld") != std::string::npos);
+    assert(response.find("Transfer-Encoding: chunked") != std::string::npos);
+    assert(response.find("5\r\nhello\r\n") != std::string::npos);
+    assert(response.find("5\r\nworld\r\n") != std::string::npos);
+    assert(response.find("0\r\n\r\n") != std::string::npos);
 
     server.stop();
-    std::cout << "test_stream_chunked_raw: OK\n";
+    std::cout << "test_stream_chunked_wire_format: OK\n";
+}
+
+void test_405_wrong_method() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    server.add_direct_route(
+        {HttpMethod::GET, R"(^/health$)", "health"},
+        [](const HttpRequestContext& ctx, HttpResponseWriter& res) {
+            (void)ctx;
+            res.send_json(HttpStatus::ok, R"({"status":"ok"})");
+        });
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("POST", "/health", port);
+    assert(std::stoi(resp->status_code) == 405);
+
+    auto it = resp->header.find("Allow");
+    assert(it != resp->header.end());
+    assert(it->second.find("GET") != std::string::npos);
+
+    std::string body = resp->content.string();
+    assert(body.find("\"error\"") != std::string::npos);
+
+    server.stop();
+    std::cout << "test_405_wrong_method: OK\n";
 }
 
 void test_server_restart() {
@@ -385,7 +444,8 @@ int main() {
     test_direct_post_echo();
     test_stream_sse_headers();
     test_stream_sse_content();
-    test_stream_chunked_raw();
+    test_stream_chunked_wire_format();
+    test_405_wrong_method();
     test_server_restart();
     std::cout << "All integration tests passed.\n";
     return 0;

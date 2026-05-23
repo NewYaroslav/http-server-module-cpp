@@ -10,8 +10,10 @@
 #include <functional>
 #include <iomanip>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -235,6 +237,55 @@ void SimpleWebServerBackend::register_routes() {
 
                 handler(ctx, session);
             };
+    }
+
+    // 405 Method Not Allowed for known paths with disallowed methods
+    {
+        std::map<std::string, std::set<std::string>> allowed_methods;
+        for (const auto& route : compiled_direct_routes_) {
+            if (!route.config.enabled) continue;
+            allowed_methods[route.config.path_regex].insert(
+                to_string(route.config.method));
+        }
+        for (const auto& route : compiled_stream_routes_) {
+            if (!route.config.enabled) continue;
+            allowed_methods[route.config.path_regex].insert(
+                to_string(route.config.method));
+        }
+
+        const std::vector<std::string> all_methods = {
+            "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"};
+
+        for (const auto& entry : allowed_methods) {
+            const auto& path_regex = entry.first;
+            const auto& allowed = entry.second;
+
+            std::string allow_header;
+            bool first = true;
+            for (const auto& m : allowed) {
+                if (!first) allow_header += ", ";
+                allow_header += m;
+                first = false;
+            }
+
+            for (const auto& m : all_methods) {
+                if (allowed.find(m) == allowed.end()) {
+                    server->resource[path_regex][m] =
+                        [allow_header](
+                            const std::shared_ptr<SwsServer::Response>& response,
+                            const std::shared_ptr<SwsServer::Request>& /*request*/) {
+                            SimpleWeb::CaseInsensitiveMultimap headers;
+                            headers.emplace("Content-Type", "application/json");
+                            headers.emplace("Allow", allow_header);
+                            response->write(
+                                SimpleWeb::StatusCode::
+                                    client_error_method_not_allowed,
+                                R"({"error":"method not allowed"})",
+                                headers);
+                        };
+                }
+            }
+        }
     }
 
     // Default resource -- 404 JSON
