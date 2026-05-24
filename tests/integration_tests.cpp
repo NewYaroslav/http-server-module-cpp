@@ -437,6 +437,70 @@ void test_server_restart() {
     std::cout << "test_server_restart: OK\n";
 }
 
+#if __has_include("event_hub.hpp")
+#include <event_hub.hpp>
+
+struct EchoCommand {
+    std::string id;
+    std::string body;
+};
+
+struct EchoResult {
+    std::string id;
+    std::string body;
+};
+
+void test_event_route() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    event_hub::EventBus bus;
+
+    bus.subscribe<EchoCommand>(
+        &bus,
+        [&bus](const EchoCommand& cmd) {
+            EchoResult res;
+            res.id = cmd.id;
+            res.body = cmd.body;
+            bus.emit(res);
+        });
+
+    EventRouteAdapter<EchoCommand, EchoResult> adapter;
+    adapter.make_command = [](const HttpRequestContext& ctx) -> EchoCommand {
+        EchoCommand cmd;
+        cmd.id = ctx.request_id;
+        cmd.body = ctx.body;
+        return cmd;
+    };
+    adapter.match_result = [](const EchoResult& res, const EchoCommand& cmd) {
+        return res.id == cmd.id;
+    };
+    adapter.make_response = [](const EchoResult& res) -> HttpResponseData {
+        return HttpResponseData::text(HttpStatus::ok, res.body);
+    };
+    adapter.timeout = std::chrono::milliseconds(500);
+
+    server.add_event_route(
+        {HttpMethod::POST, R"(^/echo$)", "echo_event"},
+        &bus,
+        adapter);
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("POST", "/echo", port, "hello-bus");
+    assert(std::stoi(resp->status_code) == 200);
+    assert(resp->content.string() == "hello-bus");
+
+    server.stop();
+    std::cout << "test_event_route: OK\n";
+}
+
+#endif // __has_include("event_hub.hpp")
+
 int main() {
     test_direct_health();
     test_direct_404();
@@ -447,6 +511,9 @@ int main() {
     test_stream_chunked_wire_format();
     test_405_wrong_method();
     test_server_restart();
+#if __has_include("event_hub.hpp")
+    test_event_route();
+#endif
     std::cout << "All integration tests passed.\n";
     return 0;
 }
