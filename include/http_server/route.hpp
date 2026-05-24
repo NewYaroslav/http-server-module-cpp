@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace http_server {
 
@@ -26,6 +27,7 @@ struct HttpRouteConfig {
     std::string path_regex;
     std::string name;
     bool enabled = true;
+    std::vector<std::string> path_param_names;
 };
 
 /// Streaming mode for a stream route.
@@ -41,6 +43,7 @@ struct HttpStreamRouteConfig {
     std::string name;
     bool enabled = true;
     StreamMode mode = StreamMode::sse;
+    std::vector<std::string> path_param_names;
 };
 
 /// A direct route entry binding config to handler.

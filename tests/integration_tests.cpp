@@ -248,9 +248,9 @@ void test_direct_path_params() {
     HttpServerModule server(config);
 
     server.add_direct_route(
-        {HttpMethod::GET, R"(^/users/([0-9]+)$)", "user"},
+        {HttpMethod::GET, R"(^/users/([0-9]+)$)", "user", true, {"user_id"}},
         [](const HttpRequestContext& ctx, HttpResponseWriter& res) {
-            auto it = ctx.path_params.find("1");
+            auto it = ctx.path_params.find("user_id");
             if (it != ctx.path_params.end()) {
                 res.send_json(HttpStatus::ok, R"({"id":""" + it->second + R"("})");
             } else {
