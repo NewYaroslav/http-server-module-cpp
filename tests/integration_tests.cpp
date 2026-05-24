@@ -499,6 +499,170 @@ void test_event_route() {
     std::cout << "test_event_route: OK\n";
 }
 
+void test_event_route_timeout() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    event_hub::EventBus bus;
+    // Subscriber does NOT emit a result — handler should timeout
+
+    EventRouteAdapter<EchoCommand, EchoResult> adapter;
+    adapter.make_command = [](const HttpRequestContext& ctx) -> EchoCommand {
+        EchoCommand cmd;
+        cmd.id = ctx.request_id;
+        cmd.body = ctx.body;
+        return cmd;
+    };
+    adapter.match_result = [](const EchoResult&, const EchoCommand&) {
+        return true;
+    };
+    adapter.make_response = [](const EchoResult&) -> HttpResponseData {
+        return HttpResponseData::text(HttpStatus::ok, "should not reach");
+    };
+    adapter.timeout = std::chrono::milliseconds(50);
+
+    server.add_event_route(
+        {HttpMethod::POST, R"(^/echo$)", "echo_timeout"},
+        &bus,
+        adapter);
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("POST", "/echo", port, "body");
+    assert(std::stoi(resp->status_code) == 504);
+    assert(resp->content.string().find("gateway timeout") != std::string::npos);
+
+    server.stop();
+    std::cout << "test_event_route_timeout: OK\n";
+}
+
+void test_event_route_null_bus() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    EventRouteAdapter<EchoCommand, EchoResult> adapter;
+    adapter.make_command = [](const HttpRequestContext& ctx) -> EchoCommand {
+        EchoCommand cmd;
+        cmd.id = ctx.request_id;
+        cmd.body = ctx.body;
+        return cmd;
+    };
+    adapter.match_result = [](const EchoResult&, const EchoCommand&) {
+        return true;
+    };
+    adapter.make_response = [](const EchoResult&) -> HttpResponseData {
+        return HttpResponseData::text(HttpStatus::ok, "should not reach");
+    };
+
+    server.add_event_route(
+        {HttpMethod::POST, R"(^/echo$)", "echo_null_bus"},
+        nullptr,
+        adapter);
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("POST", "/echo", port, "body");
+    assert(std::stoi(resp->status_code) == 500);
+    assert(resp->content.string().find("event bus is null") != std::string::npos);
+
+    server.stop();
+    std::cout << "test_event_route_null_bus: OK\n";
+}
+
+void test_event_route_unmatched_result_ignored() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    event_hub::EventBus bus;
+
+    // Subscriber emits a result with a WRONG id, so match_result fails
+    bus.subscribe<EchoCommand>(
+        &bus,
+        [&bus](const EchoCommand& cmd) {
+            EchoResult res;
+            res.id = "wrong-id";
+            res.body = cmd.body;
+            bus.emit(res);
+        });
+
+    EventRouteAdapter<EchoCommand, EchoResult> adapter;
+    adapter.make_command = [](const HttpRequestContext& ctx) -> EchoCommand {
+        EchoCommand cmd;
+        cmd.id = ctx.request_id;
+        cmd.body = ctx.body;
+        return cmd;
+    };
+    adapter.match_result = [](const EchoResult& res, const EchoCommand& cmd) {
+        return res.id == cmd.id;
+    };
+    adapter.make_response = [](const EchoResult& res) -> HttpResponseData {
+        return HttpResponseData::text(HttpStatus::ok, res.body);
+    };
+    adapter.timeout = std::chrono::milliseconds(50);
+
+    server.add_event_route(
+        {HttpMethod::POST, R"(^/echo$)", "echo_unmatched"},
+        &bus,
+        adapter);
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("POST", "/echo", port, "body");
+    assert(std::stoi(resp->status_code) == 504);
+    assert(resp->content.string().find("gateway timeout") != std::string::npos);
+
+    server.stop();
+    std::cout << "test_event_route_unmatched_result_ignored: OK\n";
+}
+
+void test_event_route_adapter_exception() {
+    uint16_t port = find_free_port();
+    HttpServerConfig config;
+    config.address = "127.0.0.1";
+    config.port = port;
+    HttpServerModule server(config);
+
+    event_hub::EventBus bus;
+
+    EventRouteAdapter<EchoCommand, EchoResult> adapter;
+    adapter.make_command = [](const HttpRequestContext&) -> EchoCommand {
+        throw std::runtime_error("boom");
+    };
+    adapter.match_result = [](const EchoResult&, const EchoCommand&) {
+        return true;
+    };
+    adapter.make_response = [](const EchoResult&) -> HttpResponseData {
+        return HttpResponseData::text(HttpStatus::ok, "should not reach");
+    };
+
+    server.add_event_route(
+        {HttpMethod::POST, R"(^/echo$)", "echo_exception"},
+        &bus,
+        adapter);
+
+    server.start();
+    wait_for_server(server);
+
+    auto resp = do_request("POST", "/echo", port, "body");
+    assert(std::stoi(resp->status_code) == 500);
+    assert(resp->content.string().find("event route handler failed") != std::string::npos);
+
+    server.stop();
+    std::cout << "test_event_route_adapter_exception: OK\n";
+}
+
 #endif // __has_include("event_hub.hpp")
 
 int main() {
@@ -513,6 +677,10 @@ int main() {
     test_server_restart();
 #if __has_include("event_hub.hpp")
     test_event_route();
+    test_event_route_timeout();
+    test_event_route_null_bus();
+    test_event_route_unmatched_result_ignored();
+    test_event_route_adapter_exception();
 #endif
     std::cout << "All integration tests passed.\n";
     return 0;
