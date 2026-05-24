@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <regex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -36,6 +37,18 @@ public:
 private:
     struct SwsServerHolder;
 
+    struct CompiledHttpRoute {
+        HttpRouteConfig config;
+        DirectHandler handler;
+        std::regex compiled_regex;
+    };
+
+    struct CompiledHttpStreamRoute {
+        HttpStreamRouteConfig config;
+        StreamHandler handler;
+        std::regex compiled_regex;
+    };
+
     void register_routes();
 
     HttpRequestContext make_request_context(const std::shared_ptr<void>& sws_request);
@@ -44,8 +57,8 @@ private:
 
     std::unique_ptr<SwsServerHolder> holder_;
     HttpServerConfig config_;
-    std::vector<HttpRoute> direct_routes_;
-    std::vector<HttpStreamRoute> stream_routes_;
+    std::vector<CompiledHttpRoute> compiled_direct_routes_;
+    std::vector<CompiledHttpStreamRoute> compiled_stream_routes_;
     std::atomic<bool> running_{false};
     std::atomic<bool> started_{false};
     std::thread server_thread_;
@@ -58,7 +71,7 @@ private:
 /// to avoid leaking Simple-Web-Server headers into the public API.
 class SimpleWebStreamSession : public HttpStreamSession {
 public:
-    SimpleWebStreamSession(std::shared_ptr<void> response, std::string stream_id);
+    SimpleWebStreamSession(std::shared_ptr<void> response, std::string stream_id, StreamMode mode = StreamMode::sse);
     ~SimpleWebStreamSession() override;
 
     std::string id() const override;
@@ -78,6 +91,7 @@ private:
 
     std::shared_ptr<void> response_;
     std::string stream_id_;
+    StreamMode mode_;
 
     mutable std::mutex mutex_;
     std::queue<std::string> queue_;
