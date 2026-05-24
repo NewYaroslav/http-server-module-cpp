@@ -25,16 +25,10 @@
 
 namespace http_server {
 
-/// Dispatch mode for event routes.
-enum class EventDispatchMode {
-    emit_sync,  ///< Synchronously dispatch via event_hub::EventBus::emit().
-    post_async  ///< Queue the command via event_hub::EventBus::post().
-};
-
 /// Adapts an HTTP direct route to an event-hub request/response cycle.
 ///
-/// \tparam Command  Event type published to the bus (must derive from event_hub::Event).
-/// \tparam Result   Event type awaited from the bus (must derive from event_hub::Event).
+/// \tparam Command  Event type published to the bus.
+/// \tparam Result   Event type awaited from the bus.
 template <typename Command, typename Result>
 struct EventRouteAdapter {
     /// Create a Command from the HTTP request context.
@@ -65,6 +59,12 @@ DirectHandler make_event_route_handler(
     EventRouteAdapter<Command, Result> adapter) {
     return [bus, adapter](const HttpRequestContext& ctx,
                           HttpResponseWriter& writer) {
+        if (!bus) {
+            writer.send_json(
+                HttpStatus::internal_server_error,
+                R"({"error":"event bus is null"})");
+            return;
+        }
         try {
             Command cmd = adapter.make_command(ctx);
 
