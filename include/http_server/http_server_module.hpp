@@ -6,7 +6,16 @@
 
 #include <memory>
 
+#if __has_include("event_hub.hpp")
+namespace event_hub { class EventBus; }
+#endif
+
 namespace http_server {
+
+#if __has_include("event_hub.hpp")
+template <typename Command, typename Result>
+struct EventRouteAdapter;
+#endif
 
 /// Public-facing HTTP server module. Owns a backend via pimpl.
 class HttpServerModule {
@@ -26,6 +35,13 @@ public:
 
     void add_direct_route(HttpRouteConfig config, DirectHandler handler);
     void add_stream_route(HttpStreamRouteConfig config, StreamHandler handler);
+
+#if __has_include("event_hub.hpp")
+    template <typename Command, typename Result>
+    void add_event_route(HttpRouteConfig config,
+                         event_hub::EventBus* bus,
+                         EventRouteAdapter<Command, Result> adapter);
+#endif
 
     void start();
     void stop();

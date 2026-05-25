@@ -47,6 +47,32 @@ target_link_libraries(your_target PRIVATE http_server_module::http_server_module
 | `HTTP_SERVER_MODULE_USE_STANDALONE_ASIO` | `ON` | Use standalone Asio instead of Boost.Asio |
 | `HTTP_SERVER_MODULE_USE_EXTERNAL_DEPS` | `ON` | Use dependencies from `external/` subdirectory |
 
+## Named path parameters
+
+Regex capture groups can be mapped to human-readable names via `path_param_names`:
+
+```cpp
+server.add_direct_route(
+    {http_server::HttpMethod::GET,
+     R"(^/users/([0-9]+)/posts/([0-9]+)$)",
+     "user_post",
+     true,
+     {"user_id", "post_id"}},
+    [](const http_server::HttpRequestContext& ctx,
+       http_server::HttpResponseWriter& res) {
+        auto u = ctx.path_params.find("user_id");
+        auto p = ctx.path_params.find("post_id");
+        res.send_json(
+            http_server::HttpStatus::ok,
+            R"({"user":")" + u->second + R"(","post":")" + p->second + R"("})"
+        );
+    }
+);
+```
+
+When `path_param_names` is omitted or shorter than the number of capture groups,
+the module falls back to numeric keys `"1"`, `"2"`, etc.
+
 ## Direct route example
 
 ```cpp
@@ -113,23 +139,61 @@ int main() {
 }
 ```
 
-## Event-hub route concept
+## Event-hub route example
 
-When `HTTP_SERVER_MODULE_USE_EVENT_HUB` is enabled you can route an HTTP request
-through the event bus:
+When `HTTP_SERVER_MODULE_USE_EVENT_HUB` is enabled you can route HTTP requests
+through an `event_hub::EventBus`:
 
+```cpp
+#include <http_server.hpp>
+#include <event_hub.hpp>
+#include <iostream>
+
+struct EchoCommand { std::string id; std::string body; };
+struct EchoResult  { std::string id; std::string body; };
+
+int main() {
+    http_server::HttpServerModule server;
+    event_hub::EventBus bus;
+
+    bus.subscribe<EchoCommand>(
+        &bus,
+        [&bus](const EchoCommand& cmd) {
+            EchoResult res{cmd.id, cmd.body};
+            bus.emit(res);
+        });
+
+    http_server::EventRouteAdapter<EchoCommand, EchoResult> adapter;
+    adapter.make_command = [](const auto& ctx) -> EchoCommand {
+        return {ctx.request_id, ctx.body};
+    };
+    adapter.match_result = [](const EchoResult& r, const EchoCommand& c) {
+        return r.id == c.id;
+    };
+    adapter.make_response = [](const EchoResult& r) {
+        return http_server::HttpResponseData::text(
+            http_server::HttpStatus::ok, r.body);
+    };
+    adapter.timeout = std::chrono::milliseconds(1000);
+
+    server.add_event_route(
+        {http_server::HttpMethod::POST, R"(^/echo$)", "echo"},
+        &bus,
+        adapter);
+
+    server.start();
+    std::cin.get();
+    server.stop();
+}
+```
+
+Flow:
 1. HTTP request arrives.
-2. An adapter creates a typed `Command` event from the request context.
-3. The command is published to `event_hub::EventBus`.
-4. The adapter awaits a matching `Result` event.
-5. A `make_response` callback converts the result into `HttpResponseData`.
+2. `make_command` creates a typed `Command` event from the request context.
+3. The command is emitted synchronously to `event_hub::EventBus`.
+4. `EventAwaiter` waits for a matching `Result` event.
+5. `make_response` converts the result into `HttpResponseData`.
 6. On timeout the adapter returns `504 Gateway Timeout`.
-
-This keeps the HTTP layer decoupled from business logic.
-
-**Note:** `EventRouteAdapter` and the event-hub headers are currently an
-**experimental scaffold**. The full `add_event_route()` implementation with
-`event_hub::EventBus::await_once` integration is planned for a follow-up PR.
 
 ## Backend notes
 

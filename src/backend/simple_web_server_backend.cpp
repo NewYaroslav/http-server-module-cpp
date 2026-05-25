@@ -131,9 +131,10 @@ void SimpleWebServerBackend::register_routes() {
         std::string method_str = to_string(route.config.method);
         auto handler = route.handler;
         auto path_regex = route.compiled_regex;
+        auto param_names = route.config.path_param_names;
 
         server->resource[route.config.path_regex][method_str] =
-            [this, handler, path_regex](
+            [this, handler, path_regex, param_names](
                 const std::shared_ptr<SwsServer::Response>& response,
                 const std::shared_ptr<SwsServer::Request>& request) {
                 auto method_opt = http_method_from_string(request->method);
@@ -153,8 +154,12 @@ void SimpleWebServerBackend::register_routes() {
 
                 std::smatch match;
                 if (std::regex_match(request->path, match, path_regex)) {
-                    for (size_t i = 0; i < match.size(); ++i) {
-                        ctx.path_params[std::to_string(i)] = match[i].str();
+                    for (size_t i = 1; i < match.size(); ++i) {
+                        if (i - 1 < param_names.size()) {
+                            ctx.path_params[param_names[i - 1]] = match[i].str();
+                        } else {
+                            ctx.path_params[std::to_string(i)] = match[i].str();
+                        }
                     }
                 }
 
@@ -190,9 +195,10 @@ void SimpleWebServerBackend::register_routes() {
         auto handler = route.handler;
         auto path_regex = route.compiled_regex;
         StreamMode mode = route.config.mode;
+        auto param_names = route.config.path_param_names;
 
         server->resource[route.config.path_regex][method_str] =
-            [this, handler, path_regex, mode](
+            [this, handler, path_regex, mode, param_names](
                 const std::shared_ptr<SwsServer::Response>& response,
                 const std::shared_ptr<SwsServer::Request>& request) {
                 auto method_opt = http_method_from_string(request->method);
@@ -212,8 +218,12 @@ void SimpleWebServerBackend::register_routes() {
 
                 std::smatch match;
                 if (std::regex_match(request->path, match, path_regex)) {
-                    for (size_t i = 0; i < match.size(); ++i) {
-                        ctx.path_params[std::to_string(i)] = match[i].str();
+                    for (size_t i = 1; i < match.size(); ++i) {
+                        if (i - 1 < param_names.size()) {
+                            ctx.path_params[param_names[i - 1]] = match[i].str();
+                        } else {
+                            ctx.path_params[std::to_string(i)] = match[i].str();
+                        }
                     }
                 }
 
