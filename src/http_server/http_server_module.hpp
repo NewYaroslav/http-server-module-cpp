@@ -1,8 +1,8 @@
 #pragma once
 
-#include "backend/i_http_server_backend.hpp"
-#include "config.hpp"
-#include "route.hpp"
+#include "http_server/backend/i_http_server_backend.hpp"
+#include "http_server/config.hpp"
+#include "http_server/route.hpp"
 
 #include <memory>
 

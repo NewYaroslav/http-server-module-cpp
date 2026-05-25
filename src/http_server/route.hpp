@@ -1,8 +1,8 @@
 #pragma once
 
-#include "enums.hpp"
-#include "request.hpp"
-#include "response.hpp"
+#include "http_server/enums.hpp"
+#include "http_server/request.hpp"
+#include "http_server/response.hpp"
 
 #include <functional>
 #include <memory>

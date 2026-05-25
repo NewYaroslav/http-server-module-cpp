@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../stream_session.hpp"
-#include "i_http_server_backend.hpp"
+#include "http_server/backend/i_http_server_backend.hpp"
+#include "http_server/stream_session.hpp"
 
 #include <atomic>
 #include <cstdint>

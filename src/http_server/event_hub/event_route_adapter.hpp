@@ -6,10 +6,10 @@
 /// This header is only available when http-server-module-cpp is built with
 /// event-hub-cpp support (HTTP_SERVER_MODULE_USE_EVENT_HUB).
 
-#include "../route.hpp"
-#include "../request.hpp"
-#include "../response.hpp"
-#include "../response_writer.hpp"
+#include "http_server/request.hpp"
+#include "http_server/response.hpp"
+#include "http_server/response_writer.hpp"
+#include "http_server/route.hpp"
 
 #include <event_hub.hpp>
 

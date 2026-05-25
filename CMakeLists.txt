@@ -46,14 +46,14 @@ add_library(http_server_module::http_server_module ALIAS http_server_module)
 
 target_sources(http_server_module
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/http_server_module.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/backend/simple_web_server_backend.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/request_id.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/http_server/http_server_module.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/http_server/backend/simple_web_server_backend.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/http_server/utils/request_id.cpp
 )
 
 target_include_directories(http_server_module
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 

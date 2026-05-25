@@ -1,7 +1,7 @@
 #pragma once
 
-#include "enums.hpp"
-#include "headers.hpp"
+#include "http_server/enums.hpp"
+#include "http_server/headers.hpp"
 
 #include <cstdint>
 #include <string>

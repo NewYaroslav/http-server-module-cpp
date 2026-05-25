@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../config.hpp"
-#include "../route.hpp"
+#include "http_server/config.hpp"
+#include "http_server/route.hpp"
 
 namespace http_server {
 
